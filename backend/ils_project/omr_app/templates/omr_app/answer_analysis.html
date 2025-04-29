@@ -1,0 +1,171 @@
+{% extends "admin/base_site.html" %}
+{% load i18n admin_urls static %}
+
+{% block extrastyle %}
+<style>
+  .question-container {
+    margin-bottom: 30px;
+  }
+  .subject-title {
+    font-size: 18px;
+    font-weight: bold;
+    margin-top: 25px;
+    margin-bottom: 15px;
+    padding-bottom: 5px;
+    border-bottom: 1px solid #eee;
+  }
+  .question-row {
+    padding: 10px;
+    margin-bottom: 8px;
+    border-radius: 4px;
+  }
+  .question-correct {
+    background-color: #e6ffe6;
+  }
+  .question-incorrect {
+    background-color: #ffebeb;
+  }
+  .question-text {
+    font-weight: bold;
+  }
+  .question-metadata {
+    margin-top: 5px;
+    color: #666;
+    font-size: 0.9em;
+  }
+  .full-question {
+    margin-top: 8px;
+    padding: 5px;
+    background-color: #f9f9f9;
+    border-left: 3px solid #007bff;
+    font-style: italic;
+  }
+  .question-answer {
+    margin-top: 5px;
+  }
+  .correct-answer {
+    color: #28a745;
+  }
+  .incorrect-answer {
+    color: #dc3545;
+  }
+  .level-badge {
+    display: inline-block;
+    padding: 2px 6px;
+    border-radius: 3px;
+    font-size: 0.8em;
+    color: white;
+    background-color: #6c757d;
+  }
+  .summary-box {
+    padding: 15px;
+    background-color: #f8f9fa;
+    border-radius: 5px;
+    margin-bottom: 20px;
+  }
+  .level-summary {
+    margin-top: 10px;
+    font-size: 0.9em;
+  }
+  .level-detail {
+    margin-left: 15px;
+    color: #666;
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+<div id="content-main">
+  <div class="summary-box">
+    <h2>Answer Analysis for {{ student.name }}</h2>
+    <p>Submission Date: {{ submission.submitted_at|date:"F j, Y, g:i a" }}</p>
+    <p>Overall Score: {{ submission.score }}%</p>
+    <p class="small text-muted">Note: Scores are calculated based on randomly selected questions (max 5 per level).</p>
+  </div>
+
+  <div class="module">
+    {% for subject_name, subject_data in questions_by_subject.items %}
+      <div class="subject-container">
+        <h3 class="subject-title">{{ subject_name }}</h3>
+
+        {% with questions=subject_data.questions %}
+          {% with correct_count=0 total_asked=questions|length %}
+            {% for question in questions %}
+              {% if question.is_correct %}
+                {% with correct_count=correct_count|add:1 %}
+                {% endwith %}
+              {% endif %}
+            {% endfor %}
+
+            {% if total_asked > 0 %}
+              {% widthratio correct_count total_asked 100 as percentage %}
+              <div class="subject-summary">
+                <p>Score: {{ correct_count }}/{{ total_asked }} ({{ percentage }}%)</p>
+
+                <div class="level-summary">
+                  <p>Level Breakdown:</p>
+                  {% regroup questions by level as level_groups %}
+                  {% for level_group in level_groups %}
+                    {% with level=level_group.grouper level_questions=level_group.list %}
+                      {% with level_correct=0 %}
+                        {% for q in level_questions %}
+                          {% if q.is_correct %}
+                            {% with level_correct=level_correct|add:1 %}
+                            {% endwith %}
+                          {% endif %}
+                        {% endfor %}
+                        {% with level_total=level_questions|length %}
+                          {% if level_total > 0 %}
+                            {% widthratio level_correct level_total 100 as level_percentage %}
+                            <div class="level-detail">
+                              Level {{ level }}: {{ level_correct }}/{{ level_total }} ({{ level_percentage }}%)
+                            </div>
+                          {% endif %}
+                        {% endwith %}
+                      {% endwith %}
+                    {% endwith %}
+                  {% endfor %}
+                </div>
+              </div>
+            {% else %}
+              <div class="subject-summary">
+                <p>No questions answered for this subject.</p>
+              </div>
+            {% endif %}
+          {% endwith %}
+
+          <div class="question-container">
+            {% for question in questions %}
+              <div class="question-row {% if question.is_correct %}question-correct{% else %}question-incorrect{% endif %}">
+                <div class="question-text">Q{{ forloop.counter }}: {{ question.text }}</div>
+                <div class="question-metadata">
+                  <span class="level-badge">Level: {{ question.level_display }}</span>
+                  <span class="question-id">ID: {{ question.id }}</span>
+                  <div class="full-question">Question: {{ question.question }}</div>
+                </div>
+                <div class="question-answer">
+                  {% if question.is_correct %}
+                    <div class="correct-answer">
+                      <strong>Student Answer:</strong> {{ question.student_answer }} ✓ (Correct)
+                    </div>
+                  {% else %}
+                    <div class="incorrect-answer">
+                      <strong>Student Answer:</strong> {{ question.student_answer|default:"No Answer" }} ✗ (Incorrect)
+                      <br>
+                      <strong>Correct Answer:</strong> {{ question.correct_answer }}
+                    </div>
+                  {% endif %}
+                </div>
+              </div>
+            {% empty %}
+              <p>No questions available for this subject.</p>
+            {% endfor %}
+          </div>
+        {% endwith %}
+      </div>
+    {% empty %}
+      <p>No subjects found for this submission.</p>
+    {% endfor %}
+  </div>
+</div>
+{% endblock %}

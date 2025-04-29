@@ -1,0 +1,416 @@
+{% extends "admin/base_site.html" %}
+{% load i18n admin_urls %}
+
+{% block extrahead %}
+  {{ block.super }}
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    .chart-container {
+      background: white;
+      border-radius: 5px;
+      padding: 20px;
+      margin-bottom: 30px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.12);
+    }
+    .chart-row {
+      display: flex;  
+      flex-wrap: wrap;
+      margin: 0 -15px;
+    }
+    .chart-col {
+      flex: 1;
+      min-width: 300px;
+      padding: 15px;
+    }
+    h2 {
+      font-size: 1.2em;
+      margin-bottom: 15px;
+      color: #417690;
+    }
+    .student-details {
+      background: #f8f9fa;
+      padding: 15px;
+      border-radius: 4px;
+      margin-bottom: 20px;
+      border-left: 4px solid #417690;
+    }
+    .student-details p {
+      margin: 5px 0;
+    }
+    canvas {
+      width: 100% !important;
+    }
+    .percentage-highlight {
+      color: #28a745;
+      font-weight: bold;
+    }
+    .performance-summary {
+      margin-top: 20px;
+      padding: 15px;
+      background-color: #f1f8ff;
+      border-radius: 5px;
+      border-left: 4px solid #0366d6;
+    }
+    .subject-percentage {
+      display: flex;
+      flex-wrap: wrap;
+      margin-top: 15px;
+    }
+    .subject-card {
+      flex: 1;
+      min-width: 200px;
+      margin: 5px;
+      padding: 10px;
+      background-color: white;
+      border-radius: 4px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    }
+    .subject-name {
+      font-weight: bold;
+      margin-bottom: 5px;
+      color: #417690;
+    }
+    .level-percentage {
+      margin-top: 10px;
+      font-size: 0.9em;
+    }
+    .level-item {
+      display: flex;
+      justify-content: space-between;
+      margin-bottom: 3px;
+    }
+  </style>
+{% endblock %}
+
+{% block breadcrumbs %}
+<div class="breadcrumbs">
+  <a href="{% url 'admin:index' %}">{% trans 'Home' %}</a>
+  &rsaquo; <a href="{% url 'admin:app_list' app_label=opts.app_label %}">{{ opts.app_config.verbose_name }}</a>
+  &rsaquo; <a href="{% url opts|admin_urlname:'changelist' %}">{% trans 'Student Submissions' %}</a>
+  &rsaquo; <a href="{% url opts|admin_urlname:'change' original.pk %}">{{ original|truncatewords:"18" }}</a>
+  &rsaquo; {% trans 'Performance Charts' %}
+</div>
+{% endblock %}
+
+{% block content %}
+<div id="content-main">
+  <div class="student-details" style="color: black;">
+    <h1>{{ title }}</h1>
+    <p><strong>Student:</strong> {{ student.name }}</p>
+    <p><strong>Class:</strong> {{ student.classLevel }}</p>
+    <p><strong>School:</strong> {{ student.school }}</p>
+    
+    <!-- Calculate overall percentage -->
+    {% with total_score=submission.score total_questions=0 %}
+      {% for score in chart_data.totals|safe %}
+        {% with total_questions=total_questions|add:score %}{% endwith %}
+      {% endfor %}
+      
+      <p><strong>Total Score:</strong> {{ submission.score }} / <span id="total-questions"></span> 
+         (<span class="percentage-highlight" id="overall-percentage"></span>)
+      </p>
+    {% endwith %}
+    
+    <p><strong>Submitted on:</strong> {{ submission.submitted_at|date:"F j, Y, g:i a" }}</p>
+  </div>
+
+  <!-- Performance Summary with Percentages -->
+  <div class="performance-summary">
+    <h2>Performance Summary</h2>
+    <p>Overall percentage score: <span class="percentage-highlight" id="overall-percentage-duplicate"></span></p>
+    
+    <h3>Subject-wise Percentages</h3>
+    <div class="subject-percentage" id="subject-percentage-cards">
+      <!-- Will be populated by JavaScript -->
+    </div>
+  </div>
+
+  <div class="chart-container">
+    <h2>Subject Performance Overview</h2>
+    <canvas id="overallChart" height="100"></canvas>
+  </div>
+
+  <div class="chart-container">
+    <h2>Level-wise Performance Analysis</h2>
+    <div class="chart-row" id="levelChartsContainer"></div>
+  </div>
+</div>
+
+<script>
+  document.addEventListener('DOMContentLoaded', function() {
+    const subjects = {{ chart_data.subjects|safe }};
+    const scores = {{ chart_data.scores|safe }};
+    const totals = {{ chart_data.totals|safe }};
+    const levelData = {{ chart_data.level_data|safe }};
+    
+    // This would be passed from the backend with the actual selected questions count
+    // If not available, default to 5 questions per level as maximum
+    const maxQuestionsPerLevel = 5;
+
+    // Correctly calculate total questions and overall percentage based on selected questions
+    const totalQuestions = totals.reduce((sum, val) => sum + val, 0);
+    const totalScore = {{ submission.score }};
+    const overallPercentage = totalQuestions > 0 ? ((totalScore / totalQuestions) * 100).toFixed(2) : 0;
+    
+    // Update the HTML elements with calculated values
+    document.getElementById('total-questions').textContent = totalQuestions;
+    document.getElementById('overall-percentage').textContent = overallPercentage + '%';
+    document.getElementById('overall-percentage-duplicate').textContent = overallPercentage + '%';
+    
+    // Create subject percentage cards
+    const subjectCardsContainer = document.getElementById('subject-percentage-cards');
+    subjects.forEach((subject, index) => {
+      const score = scores[index];
+      const total = totals[index];
+      const percentage = total > 0 ? ((score / total) * 100).toFixed(2) : 0;
+      
+      const subjectData = levelData[subject];
+      
+      // For each level, assume we're only counting out of the questions that were actually selected
+      // (up to 5 per level), not the total questions available in the database
+      const level1Total = Math.min(subjectData.level1_total, maxQuestionsPerLevel);
+      const level2Total = Math.min(subjectData.level2_total, maxQuestionsPerLevel);
+      const level3Total = Math.min(subjectData.level3_total, maxQuestionsPerLevel);
+      const level4Total = Math.min(subjectData.level4_total, maxQuestionsPerLevel);
+      
+      // Calculate level percentages based on selected questions
+      const level1Percent = level1Total > 0 ? 
+        ((subjectData.level1_correct / level1Total) * 100).toFixed(2) : 0;
+      const level2Percent = level2Total > 0 ? 
+        ((subjectData.level2_correct / level2Total) * 100).toFixed(2) : 0;
+      const level3Percent = level3Total > 0 ? 
+        ((subjectData.level3_correct / level3Total) * 100).toFixed(2) : 0;
+      const level4Percent = level4Total > 0 ? 
+        ((subjectData.level4_correct / level4Total) * 100).toFixed(2) : 0;
+      
+      const card = document.createElement('div');
+      card.className = 'subject-card';
+      card.innerHTML = `
+        <div class="subject-name">${subject}</div>
+        <div>Score: ${score}/${total} <span class="percentage-highlight">(${percentage}%)</span></div>
+        <div class="level-percentage">
+          <div class="level-item">
+            <span>Level 1:</span>
+            <span>${subjectData.level1_correct}/${level1Total} (${level1Percent}%)</span>
+          </div>
+          <div class="level-item">
+            <span>Level 2:</span>
+            <span>${subjectData.level2_correct}/${level2Total} (${level2Percent}%)</span>
+          </div>
+          <div class="level-item">
+            <span>Level 3:</span>
+            <span>${subjectData.level3_correct}/${level3Total} (${level3Percent}%)</span>
+          </div>
+          <div class="level-item">
+            <span>Level 4:</span>
+            <span>${subjectData.level4_correct}/${level4Total} (${level4Percent}%)</span>
+          </div>
+        </div>
+      `;
+      subjectCardsContainer.appendChild(card);
+    });
+
+    const chartColors = {
+      correct: 'rgba(75, 192, 192, 0.7)',
+      total: 'rgba(54, 162, 235, 0.4)',
+      borderCorrect: 'rgba(75, 192, 192, 1)',
+      borderTotal: 'rgba(54, 162, 235, 1)',
+      level1: 'rgba(255, 159, 64, 0.7)',
+      level2: 'rgba(153, 102, 255, 0.7)',
+      level3: 'rgba(255, 99, 132, 0.7)',
+      level4: 'rgba(75, 192, 192, 0.7)'
+    };
+
+    // Calculate percentage datasets for overall chart
+    const percentages = subjects.map((subject, index) => {
+      return totals[index] > 0 ? (scores[index] / totals[index] * 100).toFixed(2) : 0;
+    });
+
+    const ctx = document.getElementById('overallChart').getContext('2d');
+    new Chart(ctx, {
+      type: 'bar',
+      data: {
+        labels: subjects,
+        datasets: [{
+          label: 'Score',
+          data: scores,
+          backgroundColor: chartColors.correct,
+          borderColor: chartColors.borderCorrect,
+          borderWidth: 1,
+          yAxisID: 'y'
+        }, {
+          label: 'Total',
+          data: totals,
+          backgroundColor: chartColors.total,
+          borderColor: chartColors.borderTotal,
+          borderWidth: 1,
+          yAxisID: 'y'
+        }, {
+          label: 'Percentage',
+          data: percentages,
+          type: 'line',
+          fill: false,
+          borderColor: 'rgba(255, 99, 132, 1)',
+          backgroundColor: 'rgba(255, 99, 132, 0.2)',
+          yAxisID: 'percentage'
+        }]
+      },
+      options: {
+        responsive: true,
+        scales: {
+          y: {
+            beginAtZero: true,
+            title: { display: true, text: 'Number of Questions' },
+            position: 'left'
+          },
+          percentage: {
+            beginAtZero: true,
+            max: 100,
+            title: { display: true, text: 'Percentage (%)' },
+            position: 'right',
+            grid: {
+              drawOnChartArea: false
+            }
+          }
+        },
+        plugins: {
+          legend: { position: 'top' },
+          title: { display: true, text: 'Overall Subject Performance' },
+          tooltip: {
+            callbacks: {
+              label: function(context) {
+                let label = context.dataset.label || '';
+                if (label) {
+                  label += ': ';
+                }
+                if (context.datasetIndex === 2) {
+                  label += context.raw + '%';
+                } else {
+                  label += context.raw;
+                }
+                return label;
+              }
+            }
+          }
+        }
+      }
+    });
+
+    const levelContainer = document.getElementById('levelChartsContainer');
+    subjects.forEach(subject => {
+      const subjectData = levelData[subject];
+      const col = document.createElement('div');
+      col.className = 'chart-col';
+      const canvas = document.createElement('canvas');
+      canvas.id = `chart-${subject.replace(/\s+/g, '-')}`;
+      col.appendChild(canvas);
+      levelContainer.appendChild(col);
+      
+      // Adjust level totals to selected questions (max 5 per level)
+      const level1Adjusted = Math.min(subjectData.level1_total, maxQuestionsPerLevel);
+      const level2Adjusted = Math.min(subjectData.level2_total, maxQuestionsPerLevel);
+      const level3Adjusted = Math.min(subjectData.level3_total, maxQuestionsPerLevel);
+      const level4Adjusted = Math.min(subjectData.level4_total, maxQuestionsPerLevel);
+      
+      // Calculate level percentages for charts based on selected questions
+      const level1Pct = level1Adjusted > 0 ? (subjectData.level1_correct / level1Adjusted * 100).toFixed(2) : 0;
+      const level2Pct = level2Adjusted > 0 ? (subjectData.level2_correct / level2Adjusted * 100).toFixed(2) : 0;
+      const level3Pct = level3Adjusted > 0 ? (subjectData.level3_correct / level3Adjusted * 100).toFixed(2) : 0;
+      const level4Pct = level4Adjusted > 0 ? (subjectData.level4_correct / level4Adjusted * 100).toFixed(2) : 0;
+      
+      const levelCtx = canvas.getContext('2d');
+      new Chart(levelCtx, {
+        type: 'bar',
+        data: {
+          labels: ['Level 1', 'Level 2', 'Level 3', 'Level 4'],
+          datasets: [{
+            label: 'Correct',
+            data: [subjectData.level1_correct, subjectData.level2_correct, subjectData.level3_correct, subjectData.level4_correct],
+            backgroundColor: [chartColors.level1, chartColors.level2, chartColors.level3, chartColors.level4],
+            borderWidth: 1,
+            yAxisID: 'y'
+          }, {
+            label: 'Total',
+            data: [level1Adjusted, level2Adjusted, level3Adjusted, level4Adjusted], // Use adjusted totals
+            backgroundColor: chartColors.total,
+            borderColor: chartColors.borderTotal,
+            borderWidth: 1,
+            yAxisID: 'y'
+          }, {
+            label: 'Percentage',
+            data: [level1Pct, level2Pct, level3Pct, level4Pct],
+            type: 'line',
+            fill: false,
+            borderColor: 'rgba(255, 99, 132, 1)',
+            backgroundColor: 'rgba(255, 99, 132, 0.2)',
+            yAxisID: 'percentage'
+          }]
+        },
+        options: {
+          responsive: true,
+          scales: {
+            y: {
+              beginAtZero: true,
+              title: { display: true, text: 'Number of Questions' },
+              position: 'left'
+            },
+            percentage: {
+              beginAtZero: true,
+              max: 100,
+              title: { display: true, text: 'Percentage (%)' },
+              position: 'right',
+              grid: {
+                drawOnChartArea: false
+              }
+            }
+          },
+          plugins: { 
+            title: { display: true, text: subject },
+            tooltip: {
+              callbacks: {
+                label: function(context) {
+                  let label = context.dataset.label || '';
+                  if (label) {
+                    label += ': ';
+                  }
+                  if (context.datasetIndex === 2) {
+                    label += context.raw + '%';
+                  } else {
+                    label += context.raw;
+                  }
+                  return label;
+                }
+              }
+            }
+          }
+        }
+      });
+    });
+  });
+</script>
+
+<script>
+  function downloadPDFReport() {
+    // Show loading indicator or message
+    const button = document.querySelector('button');
+    const originalText = button.textContent;
+    button.textContent = 'Generating PDF...';
+    button.disabled = true;
+    
+    // Redirect to the PDF generation endpoint
+    window.location.href = '/api/generate_pdf/{{ submission.id }}/';
+    
+    // Reset button after 3 seconds (in case the download takes time)
+    setTimeout(() => {
+      button.textContent = originalText;
+      button.disabled = false;
+    }, 3000);
+  }
+</script>
+
+<!-- Add this button near your chart -->
+<div style="margin-top: 20px; margin-bottom: 30px;">
+  <button onclick="downloadPDFReport()" class="button default">Download PDF Report</button>
+</div>
+  
+{% endblock %}
